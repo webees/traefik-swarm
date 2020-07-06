@@ -1,0 +1,97 @@
+version: "3.8"
+
+networks:
+  net_traefik:
+
+services:
+  traefik:
+    image: traefik:latest
+    networks:
+      - net_traefik
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik:/etc/traefik:ro
+      - ./traefik/cert:/cert
+    command:
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+      - --providers.docker.swarmmode
+      - --providers.docker.exposedbydefault=false
+      - --providers.file.directory=/etc/traefik
+      - --certificatesresolvers.acme.acme.email=hi@dev.run
+      - --certificatesresolvers.acme.acme.storage=/cert/acme.json
+      - --certificatesresolvers.acme.acme.tlschallenge=true
+      # - --accesslog
+      - --log
+      - --api
+      - --ping
+      - --entrypoints.http.address=:80
+      - --entrypoints.https.address=:443
+    healthcheck:
+      test: traefik healthcheck --ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      endpoint_mode: vip # vip, dnsrr
+      mode: replicated # replicated, global
+      replicas: 1 # If the service is replicated (which is the default), specify the number of containers that should be running at any given time.
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 1024M
+      placement:
+        max_replicas_per_node: 1
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure # One of none, on-failure or any (default: any).
+        delay: 0s # How long to wait between restart attempts, specified as a duration (default: 0).
+        max_attempts: 3 #How many times to attempt to restart a container before giving up (default: never give up). If the restart does not succeed within the configured window, this attempt doesn’t count toward the configured max_attempts value. For example, if max_attempts is set to ‘2’, and the restart fails on the first attempt, more than two restarts may be attempted.
+        window: 0s # How long to wait before deciding if a restart has succeeded, specified as a duration (default: decide immediately).
+      update_config:
+        parallelism: 0 # The number of containers to update at a time.
+        delay: 0s # The time to wait between updating a group of containers.
+        failure_action: pause # What to do if an update fails. One of continue, rollback, or pause (default: pause).
+        monitor: 0s # Duration after each task update to monitor for failure (ns|us|ms|s|m|h) (default 0s).
+        max_failure_ratio: 0 # Failure rate to tolerate during an update.
+        order: stop-first # Order of operations during updates. One of stop-first (old task is stopped before starting new one), or start-first (new task is started first, and the running tasks briefly overlap) (default stop-first) Note: Only supported for v3.4 and higher.
+      rollback_config:
+        parallelism: 0
+        delay: 0s
+        failure_action: pause
+        monitor: 0s
+        max_failure_ratio: 0
+        order: stop-first
+      labels:
+        - traefik.enable=true
+        - traefik.http.services.traefik.loadbalancer.server.port=8080
+
+        - traefik.http.middlewares.auth.basicauth.users=admin:$$apr1$$T1k08Mvq$$YJcPv4vlrUBjdDxQrVaMF1
+
+        - traefik.http.middlewares.http2https.redirectscheme.scheme=https
+        - traefik.http.middlewares.http2https.redirectscheme.permanent=true
+
+        - traefik.http.middlewares.hsts.headers.sslredirect=true
+        - traefik.http.middlewares.hsts.headers.forcestsheader=true
+        - traefik.http.middlewares.hsts.headers.stsincludesubdomains=true
+        - traefik.http.middlewares.hsts.headers.stsseconds=2628000
+        - traefik.http.middlewares.hsts.headers.stspreload=true
+        - traefik.http.middlewares.hsts.headers.browserxssfilter=true
+        - traefik.http.middlewares.hsts.headers.contenttypenosniff=true
+        - traefik.http.middlewares.hsts.headers.framedeny=true
+
+        - traefik.http.routers.ssl.entrypoints=http
+        - traefik.http.routers.ssl.rule=hostregexp(`{any:.+}`)
+        - traefik.http.routers.ssl.middlewares=http2https
+        - traefik.http.routers.ssl.middlewares=hsts
+        - traefik.http.routers.ssl.service=noop@internal
+
+        - traefik.http.routers.api.rule=Host(`dev.run`)
+        - traefik.http.routers.api.service=api@internal
+        - traefik.http.routers.api.middlewares=auth
+        - traefik.http.routers.api.tls.certresolver=acme
